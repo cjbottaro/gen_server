@@ -8,7 +8,7 @@ class EchoServer
   end
 
   def handle_cast(message)
-    puts "#{message}#{@state}"
+    puts "<#{Process.pid}>#{message}#{@state}"
   end
 
   def handle_call(message)
@@ -25,10 +25,12 @@ class DelegatingServer
   end
 
   def handle_call(message)
-    @server.call("#{message}!")
+    @server.call("<#{Process.pid}>#{message}!")
   end
 
 end
+
+puts "Parent: #{Process.pid}"
 
 echo_server = EchoServer.new
 delegating_server = DelegatingServer.new

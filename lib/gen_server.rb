@@ -1,10 +1,12 @@
 require "gen_server/version"
+require "gen_server/signal_handler"
 
 module GenServer
 
   def initialize(*args)
     init(*args)
     @pid = start_child_process
+    parent_create_pipes
     parent_open_pipes
   end
 
@@ -23,7 +25,7 @@ module GenServer
   end
 
   def call(message)
-    parent_write_message [:call, message]
+    parent_write_message [:call, Process.pid, message]
     parent_read_reply
   end
 
@@ -59,10 +61,7 @@ private
   end
 
   def child_signal_handler
-    Signal.trap("EXIT") do
-      FileUtils.rm_rf(mailbox_file)
-      FileUtils.rm_rf(reply_file)
-    end
+    load "gen_server/signal_handler.rb"
   end
 
   def child_make_pipes
@@ -76,13 +75,14 @@ private
 
   def child_loop
     while true
-      type, message = child_read_message
-      case type
+      message = child_read_message
+      case message.shift
       when :call
+        reply_pid, message = message
         reply = handle_call(message)
-        child_write_reply(reply)
+        child_write_reply(reply_pid, reply)
       when :cast
-        handle_cast(message)
+        handle_cast(message.first)
       else
         raise ArgumentError, "unexpected message type: #{type.inspect}"
       end
@@ -97,9 +97,18 @@ private
     retry
   end
 
-  def child_write_reply(reply)
+  def child_write_reply(reply_pid, reply)
+    @reply_files ||= {}
+    @reply_files[reply_pid] ||= File.open("#{reply_pid}.reply", "w+")
+
     Marshal.dump(reply, @reply)
     @reply.flush
+  end
+
+  def parent_create_pipes
+    if !File.exists?("#{Process.pid}.reply")
+      system("mkfifo #{Process.pid}.reply") or raise "cannot create fifo pipes"
+    end
   end
 
   def parent_open_pipes
