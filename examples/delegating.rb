@@ -37,6 +37,7 @@ delegating_server = DelegatingServer.new
 
 echo_server.cast("hi")
 echo_server.cast("bye?")
+puts echo_server.call("bang!")
 puts echo_server.call("byyyeeeee")
 
 delegating_server.cast(echo_server)

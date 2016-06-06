@@ -5,26 +5,25 @@ module GenServer
 
   def initialize(*args)
     init(*args)
-    @pid = start_child_process
-    parent_create_pipes
-    parent_open_pipes
+    start_child_process
+    parent_setup_mailbox
   end
 
   def init(*args)
   end
 
   def start_child_process
-    Process.fork do
+    @pid = Process.fork do
       @pid = Process.pid # Set our own pid.
       child_start_watchdog
       child_signal_handler
-      child_make_pipes
-      child_open_pipes
+      child_setup_mailbox
       child_loop
     end
   end
 
   def call(message)
+    system("mkfifo #{reply_file_name}") unless File.exists?(reply_file_name)
     parent_write_message [:call, Process.pid, message]
     parent_read_reply
   end
@@ -43,8 +42,8 @@ private
     "#{@pid}.mailbox"
   end
 
-  def reply_file
-    "#{@pid}.reply"
+  def reply_file_name
+    "#{Process.pid}.reply"
   end
 
   def child_start_watchdog
@@ -64,13 +63,9 @@ private
     load "gen_server/signal_handler.rb"
   end
 
-  def child_make_pipes
-    system("mkfifo #{@pid}.mailbox; mkfifo #{@pid}.reply") or raise "cannot create fifo pipes"
-  end
-
-  def child_open_pipes
+  def child_setup_mailbox
+    system("mkfifo #{@pid}.mailbox") or raise "cannot create fifo pipes"
     @mailbox = File.open(mailbox_file, "r")
-    @reply = File.open(reply_file, "w+")
   end
 
   def child_loop
@@ -100,27 +95,21 @@ private
   def child_write_reply(reply_pid, reply)
     @reply_files ||= {}
     @reply_files[reply_pid] ||= File.open("#{reply_pid}.reply", "w+")
+    reply_file = @reply_files[reply_pid]
 
-    Marshal.dump(reply, @reply)
-    @reply.flush
+    Marshal.dump(reply, reply_file)
+    reply_file.flush
   end
 
-  def parent_create_pipes
-    if !File.exists?("#{Process.pid}.reply")
-      system("mkfifo #{Process.pid}.reply") or raise "cannot create fifo pipes"
-    end
-  end
-
-  def parent_open_pipes
+  def parent_setup_mailbox
     retry_count = 0
-    while !File.exists?(mailbox_file) || !File.exists?(reply_file)
+    while !File.exists?(mailbox_file)
       raise "cannot find named pipes" if retry_count > 5
       sleep(0.01)
       retry_count += 1
     end
 
     @mailbox = File.open(mailbox_file, "w+")
-    @reply = File.open(reply_file, "r")
   end
 
   def parent_write_message(message)
@@ -129,7 +118,21 @@ private
   end
 
   def parent_read_reply
-    Marshal.load(@reply)
+
+    # Pipe semantics are such that opening a pipe on one end will block until
+    # something opens it on the other end. Thus we have to fire off a message
+    # that will be replied to *before* we try to open the pipe.
+    # This will NOT work:
+    #   open_pipe
+    #   send_msg
+    #   recv_msg
+    # This will work:
+    #   send_msg
+    #   open_pipe
+    #   recv_msg
+
+    @reply_file ||= File.open(reply_file_name, "r")
+    Marshal.load(@reply_file)
   end
 
   def marshal_dump
@@ -138,7 +141,7 @@ private
 
   def marshal_load(pid)
     @pid = pid
-    parent_open_pipes
+    parent_setup_mailbox
   end
 
 end
