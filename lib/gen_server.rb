@@ -3,6 +3,8 @@ require "gen_server/signal_handler"
 
 module GenServer
 
+  attr_reader :pid
+
   def initialize(*args)
     init(*args)
     start_child_process
@@ -22,18 +24,23 @@ module GenServer
     end
   end
 
-  def call(message)
+  def call(*message)
     system("mkfifo #{reply_file_name}") unless File.exists?(reply_file_name)
     parent_write_message [:call, Process.pid, message]
     parent_read_reply
   end
 
-  def cast(message)
+  def cast(*message)
     parent_write_message [:cast, message]
+    nil
   end
 
   def wait
     Process.wait(@pid)
+  end
+
+  def inspect
+    "#PID<#{@pid}>"
   end
 
 private
@@ -71,13 +78,14 @@ private
   def child_loop
     while true
       message = child_read_message
-      case message.shift
+      case message[0]
       when :call
-        reply_pid, message = message
-        reply = handle_call(message)
-        child_write_reply(reply_pid, reply)
+        _, from, message = message
+        reply = handle_call(from, *message)
+        child_write_reply(from, reply)
       when :cast
-        handle_cast(message.first)
+        _, message = message
+        handle_cast(*message)
       else
         raise ArgumentError, "unexpected message type: #{type.inspect}"
       end
@@ -104,8 +112,8 @@ private
   def parent_setup_mailbox
     retry_count = 0
     while !File.exists?(mailbox_file)
-      raise "cannot find named pipes" if retry_count > 5
-      sleep(0.01)
+      raise "cannot find named pipes" if retry_count > 10
+      sleep(0.05)
       retry_count += 1
     end
 

@@ -11,7 +11,7 @@ class EchoServer
     puts "<#{Process.pid}>#{message}#{@state}"
   end
 
-  def handle_call(message)
+  def handle_call(from, message)
     "#{message}#{@state}"
   end
 
